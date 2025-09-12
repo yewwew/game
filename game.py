@@ -215,10 +215,10 @@ class GameMain:
         button_frame = tk.Frame(parent, bg='#34495e')
         button_frame.pack(expand=True, fill='both', padx=20, pady=10)
         
-        # 战斗按钮
+        # 跑团冒险按钮
         battle_button = tk.Button(
             button_frame,
-            text="⚔️ 战斗",
+            text="🎲 跑团冒险",
             font=("Arial", 14, "bold"),
             bg='#e74c3c',
             fg='white',
@@ -362,9 +362,9 @@ class GameMain:
         self.log_text.config(state='disabled')
     
     def start_battle(self):
-        """开始战斗"""
-        self.add_log("进入战斗！")
-        messagebox.showinfo("战斗", "战斗功能开发中...")
+        """开始跑团冒险游戏"""
+        self.add_log("开始跑团冒险游戏！")
+        self.launch_adventure_game()
     
     def start_exploration(self):
         """开始探索"""
@@ -385,6 +385,31 @@ class GameMain:
         """打开背包"""
         self.add_log("查看背包")
         messagebox.showinfo("背包", "背包功能开发中...")
+    
+    def launch_adventure_game(self):
+        """启动跑团冒险游戏"""
+        try:
+            import subprocess
+            import sys
+            import os
+            
+            # 获取当前目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            adventure_path = os.path.join(current_dir, "adventure_game.py")
+            
+            # 传递角色属性数据
+            attr_data = {
+                '体质': self.attributes['体质'],
+                '智力': self.attributes['智力'],
+                '情商': self.attributes['情商'],
+                '幸运': self.attributes['幸运']
+            }
+            
+            # 启动冒险游戏
+            subprocess.Popen([sys.executable, adventure_path, str(attr_data)])
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"启动冒险游戏失败：{str(e)}")
 
 def main():
     root = tk.Tk()
