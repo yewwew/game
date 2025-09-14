@@ -328,8 +328,8 @@ class AdventureGame:
         
         self.log_text = tk.Text(
             parent,
-            height=6,
-            width=50,
+            height=10,
+            width=60,
             font=("Arial", 9),
             bg='#2c3e50',
             fg='#ecf0f1',
