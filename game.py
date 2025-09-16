@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import sys
 import ast
+import random
+import json
+import os
 
 class GameMain:
     def __init__(self, root):
@@ -26,12 +29,64 @@ class GameMain:
         self.magic = 50
         self.max_magic = 50
         
+        # 当前事件
+        self.current_event = None
+        self.current_choices = []
+        
+        # 初始化事件库
+        self.init_event_library()
+        
         # 创建界面
         self.create_widgets()
         
         # 如果有命令行参数，加载角色属性
         if len(sys.argv) > 1:
             self.load_character_attributes(sys.argv[1])
+    
+    def init_event_library(self):
+        """从JSON文件初始化事件库"""
+        try:
+            # 获取当前脚本所在目录
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            events_file = os.path.join(script_dir, 'events.json')
+            
+            # 读取JSON文件
+            with open(events_file, 'r', encoding='utf-8') as f:
+                self.event_library = json.load(f)
+            
+            # 将JSON中的列表格式转换为元组格式（为了兼容现有代码）
+            for event_name, event_data in self.event_library.items():
+                for choice in event_data['choices']:
+                    for effect_name, effect_value in choice['effects'].items():
+                        if isinstance(effect_value, list) and len(effect_value) == 2:
+                            choice['effects'][effect_name] = tuple(effect_value)
+            
+            print("事件库加载成功！")
+            
+        except FileNotFoundError:
+            print("错误：找不到 events.json 文件！")
+            # 如果文件不存在，使用默认事件库
+            self.event_library = self.get_default_events()
+        except json.JSONDecodeError as e:
+            print(f"错误：JSON文件格式错误 - {str(e)}")
+            self.event_library = self.get_default_events()
+        except Exception as e:
+            print(f"错误：加载事件库失败 - {str(e)}")
+            self.event_library = self.get_default_events()
+    
+    def get_default_events(self):
+        """获取默认事件库（作为备用）"""
+        return {
+            "默认事件": {
+                "description": "🎮 这是一个默认事件，请检查 events.json 文件。",
+                "choices": [
+                    {"text": "🔧 修复问题", "effects": {"智力": (1, 2)}, "description": "你尝试修复了问题"},
+                    {"text": "🏃 离开这里", "effects": {"幸运": (1, 1)}, "description": "你离开了这里"},
+                    {"text": "🗣️ 寻求帮助", "effects": {"情商": (1, 1)}, "description": "你寻求了帮助"},
+                    {"text": "⏰ 等待", "effects": {"体质": (1, 1)}, "description": "你耐心等待"}
+                ]
+            }
+        }
     
     def create_widgets(self):
         # 主标题
@@ -68,12 +123,18 @@ class GameMain:
         # 选择按钮区域
         self.create_choice_buttons(left_frame)
         
-        # 右侧 - 游戏日志区域
+        # 右侧 - 属性显示和游戏日志区域
         right_frame = tk.Frame(main_frame, bg='#34495e', relief='raised', bd=2)
         right_frame.pack(side='right', fill='both', expand=True, padx=(10, 0))
         
+        # 属性显示区域
+        self.create_attributes_display(right_frame)
+        
         # 游戏日志区域
         self.create_game_log(right_frame)
+        
+        # 所有组件创建完成后，显示初始事件
+        self.show_random_event()
     
     def create_event_display(self, parent):
         """创建事件显示"""
@@ -89,270 +150,213 @@ class GameMain:
         )
         self.event_text.pack(padx=20, pady=10)
         
-        # 添加初始事件
-        self.show_initial_event()
+        # 初始事件将在所有组件创建后显示
     
     def create_choice_buttons(self, parent):
         """创建选择按钮"""
         self.choice_frame = tk.Frame(parent, bg='#34495e')
         self.choice_frame.pack(fill='x', padx=20, pady=10)
-        
-        # 添加初始选择按钮
-        self.show_initial_choices()
     
-    def show_initial_event(self):
-        """显示初始事件"""
+    def show_random_event(self):
+        """显示随机事件"""
+        # 随机选择一个事件
+        event_name = random.choice(list(self.event_library.keys()))
+        self.current_event = self.event_library[event_name]
+        self.current_choices = self.current_event["choices"]
+        
+        # 显示事件描述
         self.event_text.config(state='normal')
         self.event_text.delete(1.0, 'end')
-        self.event_text.insert('end', "🎮 欢迎来到游戏世界！\n\n")
-        self.event_text.insert('end', "你是一名勇敢的冒险者，面前有三条道路：\n\n")
-        self.event_text.insert('end', "1. 🗡️ 前往危险的森林探险\n")
-        self.event_text.insert('end', "2. 🏰 进入神秘的城堡\n")
-        self.event_text.insert('end', "3. 🏪 访问友好的村庄\n\n")
-        self.event_text.insert('end', "请选择你的道路...")
+        self.event_text.insert('end', f"🎮 {event_name}\n\n")
+        self.event_text.insert('end', f"{self.current_event['description']}\n\n")
+        self.event_text.insert('end', "请选择你的行动...")
         self.event_text.config(state='disabled')
+        
+        # 更新选择按钮
+        self.update_dynamic_choices()
     
-    def show_initial_choices(self):
-        """显示初始选择按钮"""
+    def show_dynamic_choices(self):
+        """显示动态选择按钮"""
+        self.update_dynamic_choices()
+    
+    def update_dynamic_choices(self):
+        """更新动态选择按钮"""
         # 清除现有按钮
         for widget in self.choice_frame.winfo_children():
             widget.destroy()
         
-        # 森林探险按钮
-        forest_button = tk.Button(
+        if not self.current_choices:
+            return
+        
+        # 创建4个选择按钮
+        colors = ['#3498db', '#e74c3c', '#f39c12', '#27ae60']
+        
+        for i, choice in enumerate(self.current_choices):
+            button = tk.Button(
+                self.choice_frame,
+                text=choice["text"],
+                font=("Arial", 12, "bold"),
+                bg=colors[i % len(colors)],
+                fg='white',
+                relief='raised',
+                bd=3,
+                command=lambda c=choice: self.make_choice(c),
+                height=2
+            )
+            button.pack(fill='x', pady=5)
+    
+    def make_choice(self, choice):
+        """处理选择"""
+        # 记录选择
+        self.add_log(f"选择了：{choice['text']}")
+        
+        # 应用效果
+        self.apply_effects(choice["effects"])
+        
+        # 显示结果界面
+        self.show_choice_result(choice)
+    
+    def apply_effects(self, effects):
+        """应用选择效果"""
+        for effect, value in effects.items():
+            if effect in self.attributes:
+                # 属性效果
+                if isinstance(value, tuple):
+                    change = random.randint(value[0], value[1])
+                else:
+                    change = value
+                self.attributes[effect] += change
+                self.add_log(f"{effect} +{change} (当前: {self.attributes[effect]})")
+            elif effect == "health":
+                # 生命值效果
+                if isinstance(value, tuple):
+                    change = random.randint(value[0], value[1])
+                else:
+                    change = value
+                self.health = min(self.max_health, self.health + change)
+                self.add_log(f"生命值 +{change} (当前: {self.health})")
+            elif effect == "magic":
+                # 魔法值效果
+                if isinstance(value, tuple):
+                    change = random.randint(value[0], value[1])
+                else:
+                    change = value
+                self.magic = min(self.max_magic, self.magic + change)
+                self.add_log(f"魔法值 +{change} (当前: {self.magic})")
+            elif effect == "experience":
+                # 经验值效果
+                if isinstance(value, tuple):
+                    change = random.randint(value[0], value[1])
+                else:
+                    change = value
+                self.experience += change
+                self.add_log(f"经验值 +{change} (当前: {self.experience})")
+        
+        # 更新属性显示
+        self.update_attributes_display()
+    
+    def show_choice_result(self, choice):
+        """显示选择结果"""
+        self.event_text.config(state='normal')
+        self.event_text.delete(1.0, 'end')
+        self.event_text.insert('end', f"✅ 选择结果\n\n")
+        self.event_text.insert('end', f"{choice['description']}\n\n")
+        #self.event_text.insert('end', "点击下方按钮继续你的冒险...")
+        self.event_text.config(state='disabled')
+        
+        # 更新选择按钮为继续按钮
+        self.show_continue_button()
+    
+    def show_continue_button(self):
+        """显示继续按钮"""
+        # 清除现有按钮
+        for widget in self.choice_frame.winfo_children():
+            widget.destroy()
+        
+        # 创建继续按钮
+        continue_button = tk.Button(
             self.choice_frame,
-            text="🗡️ 前往森林探险",
-            font=("Arial", 12, "bold"),
+            text="🚀 继续冒险",
+            font=("Arial", 14, "bold"),
             bg='#27ae60',
             fg='white',
             relief='raised',
             bd=3,
-            command=self.choose_forest,
-            height=2
+            command=self.continue_adventure,
+            height=3
         )
-        forest_button.pack(fill='x', pady=5)
-        
-        # 城堡按钮
-        castle_button = tk.Button(
-            self.choice_frame,
-            text="🏰 进入神秘城堡",
-            font=("Arial", 12, "bold"),
-            bg='#9b59b6',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=self.choose_castle,
-            height=2
-        )
-        castle_button.pack(fill='x', pady=5)
-        
-        # 村庄按钮
-        village_button = tk.Button(
-            self.choice_frame,
-            text="🏪 访问友好村庄",
-            font=("Arial", 12, "bold"),
-            bg='#f39c12',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=self.choose_village,
-            height=2
-        )
-        village_button.pack(fill='x', pady=5)
+        continue_button.pack(fill='x', pady=10)
     
-    def choose_forest(self):
-        """选择森林探险"""
-        self.add_log("选择了森林探险")
-        self.show_forest_event()
+    def continue_adventure(self):
+        """继续冒险，显示下一个随机事件"""
+        self.add_log("继续冒险...")
+        self.show_random_event()
     
-    def choose_castle(self):
-        """选择城堡"""
-        self.add_log("选择了神秘城堡")
-        self.show_castle_event()
-    
-    def choose_village(self):
-        """选择村庄"""
-        self.add_log("选择了友好村庄")
-        self.show_village_event()
-    
-    def show_forest_event(self):
-        """显示森林事件"""
-        self.event_text.config(state='normal')
-        self.event_text.delete(1.0, 'end')
-        self.event_text.insert('end', "🌲 森林探险\n\n")
-        self.event_text.insert('end', "你进入了茂密的森林，阳光透过树叶洒下斑驳的光影。\n\n")
-        self.event_text.insert('end', "突然，你听到前方传来奇怪的声音...\n\n")
-        self.event_text.insert('end', "1. 🔍 悄悄接近查看\n")
-        self.event_text.insert('end', "2. 🏃 快速离开\n")
-        self.event_text.insert('end', "3. 🗣️ 大声询问")
-        self.event_text.config(state='disabled')
-        
-        # 更新选择按钮
-        self.update_forest_choices()
-    
-    def show_castle_event(self):
-        """显示城堡事件"""
-        self.event_text.config(state='normal')
-        self.event_text.delete(1.0, 'end')
-        self.event_text.insert('end', "🏰 神秘城堡\n\n")
-        self.event_text.insert('end', "你站在一座古老的城堡前，石墙上爬满了藤蔓。\n\n")
-        self.event_text.insert('end', "城堡的大门半开着，里面传来微弱的光亮...\n\n")
-        self.event_text.insert('end', "1. 🚪 推门进入\n")
-        self.event_text.insert('end', "2. 🔍 先观察周围\n")
-        self.event_text.insert('end', "3. 🏃 离开这里")
-        self.event_text.config(state='disabled')
-        
-        # 更新选择按钮
-        self.update_castle_choices()
-    
-    def show_village_event(self):
-        """显示村庄事件"""
-        self.event_text.config(state='normal')
-        self.event_text.delete(1.0, 'end')
-        self.event_text.insert('end', "🏪 友好村庄\n\n")
-        self.event_text.insert('end', "你来到了一个宁静的村庄，村民们正在忙碌着。\n\n")
-        self.event_text.insert('end', "一位老人向你招手，似乎有话要说...\n\n")
-        self.event_text.insert('end', "1. 👋 上前打招呼\n")
-        self.event_text.insert('end', "2. 🏪 先去商店看看\n")
-        self.event_text.insert('end', "3. 🏃 继续赶路")
-        self.event_text.config(state='disabled')
-        
-        # 更新选择按钮
-        self.update_village_choices()
-    
-    def update_forest_choices(self):
-        """更新森林选择按钮"""
-        for widget in self.choice_frame.winfo_children():
-            widget.destroy()
-        
-        choice1 = tk.Button(
-            self.choice_frame,
-            text="🔍 悄悄接近查看",
-            font=("Arial", 12, "bold"),
-            bg='#3498db',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("悄悄接近查看"),
-            height=2
+    def create_attributes_display(self, parent):
+        """创建属性显示区域"""
+        # 属性标题
+        attr_title = tk.Label(
+            parent,
+            text="📊 角色属性",
+            font=("Arial", 16, "bold"),
+            bg='#34495e',
+            fg='#ecf0f1'
         )
-        choice1.pack(fill='x', pady=5)
+        attr_title.pack(pady=15)
         
-        choice2 = tk.Button(
-            self.choice_frame,
-            text="🏃 快速离开",
-            font=("Arial", 12, "bold"),
-            bg='#e74c3c',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("快速离开"),
-            height=2
-        )
-        choice2.pack(fill='x', pady=5)
+        # 属性显示框架
+        self.attr_frame = tk.Frame(parent, bg='#34495e')
+        self.attr_frame.pack(fill='x', padx=20, pady=10)
         
-        choice3 = tk.Button(
-            self.choice_frame,
-            text="🗣️ 大声询问",
-            font=("Arial", 12, "bold"),
-            bg='#f39c12',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("大声询问"),
-            height=2
+        # 创建属性标签
+        self.attr_labels = {}
+        for attr_name in self.attributes:
+            label = tk.Label(
+                self.attr_frame,
+                text=f"{attr_name}: {self.attributes[attr_name]}",
+                font=("Arial", 12),
+                bg='#34495e',
+                fg='#ecf0f1'
+            )
+            label.pack(anchor='w', pady=2)
+            self.attr_labels[attr_name] = label
+        
+        # 生命值和魔法值显示
+        self.health_label = tk.Label(
+            self.attr_frame,
+            text=f"❤️ 生命值: {self.health}/{self.max_health}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#e74c3c'
         )
-        choice3.pack(fill='x', pady=5)
+        self.health_label.pack(anchor='w', pady=2)
+        
+        self.magic_label = tk.Label(
+            self.attr_frame,
+            text=f"🔮 魔法值: {self.magic}/{self.max_magic}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#9b59b6'
+        )
+        self.magic_label.pack(anchor='w', pady=2)
+        
+        self.exp_label = tk.Label(
+            self.attr_frame,
+            text=f"⭐ 经验值: {self.experience}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#f39c12'
+        )
+        self.exp_label.pack(anchor='w', pady=2)
     
-    def update_castle_choices(self):
-        """更新城堡选择按钮"""
-        for widget in self.choice_frame.winfo_children():
-            widget.destroy()
+    def update_attributes_display(self):
+        """更新属性显示"""
+        for attr_name, value in self.attributes.items():
+            self.attr_labels[attr_name].config(text=f"{attr_name}: {value}")
         
-        choice1 = tk.Button(
-            self.choice_frame,
-            text="🚪 推门进入",
-            font=("Arial", 12, "bold"),
-            bg='#9b59b6',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("推门进入城堡"),
-            height=2
-        )
-        choice1.pack(fill='x', pady=5)
-        
-        choice2 = tk.Button(
-            self.choice_frame,
-            text="🔍 先观察周围",
-            font=("Arial", 12, "bold"),
-            bg='#3498db',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("观察周围环境"),
-            height=2
-        )
-        choice2.pack(fill='x', pady=5)
-        
-        choice3 = tk.Button(
-            self.choice_frame,
-            text="🏃 离开这里",
-            font=("Arial", 12, "bold"),
-            bg='#e74c3c',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("离开城堡"),
-            height=2
-        )
-        choice3.pack(fill='x', pady=5)
-    
-    def update_village_choices(self):
-        """更新村庄选择按钮"""
-        for widget in self.choice_frame.winfo_children():
-            widget.destroy()
-        
-        choice1 = tk.Button(
-            self.choice_frame,
-            text="👋 上前打招呼",
-            font=("Arial", 12, "bold"),
-            bg='#27ae60',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("向老人打招呼"),
-            height=2
-        )
-        choice1.pack(fill='x', pady=5)
-        
-        choice2 = tk.Button(
-            self.choice_frame,
-            text="🏪 先去商店看看",
-            font=("Arial", 12, "bold"),
-            bg='#f39c12',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("前往商店"),
-            height=2
-        )
-        choice2.pack(fill='x', pady=5)
-        
-        choice3 = tk.Button(
-            self.choice_frame,
-            text="🏃 继续赶路",
-            font=("Arial", 12, "bold"),
-            bg='#95a5a6',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=lambda: self.add_log("继续赶路"),
-            height=2
-        )
-        choice3.pack(fill='x', pady=5)
-    
-    
+        self.health_label.config(text=f"❤️ 生命值: {self.health}/{self.max_health}")
+        self.magic_label.config(text=f"🔮 魔法值: {self.magic}/{self.max_magic}")
+        self.exp_label.config(text=f"⭐ 经验值: {self.experience}")
     
     def create_game_log(self, parent):
         """创建游戏日志"""
