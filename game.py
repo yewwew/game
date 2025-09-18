@@ -395,10 +395,21 @@ class GameMain:
     def load_character_attributes(self, attr_string):
         """加载角色属性"""
         try:
-            # 解析属性字符串
-            attr_dict = ast.literal_eval(attr_string)
+            # 首先尝试JSON解析
+            attr_dict = json.loads(attr_string)
             self.attributes.update(attr_dict)
             self.add_log(f"角色属性已加载：{attr_dict}")
+            # 更新属性显示
+            self.update_attributes_display()
+        except json.JSONDecodeError:
+            # 如果JSON解析失败，尝试使用ast.literal_eval（向后兼容）
+            try:
+                attr_dict = ast.literal_eval(attr_string)
+                self.attributes.update(attr_dict)
+                self.add_log(f"角色属性已加载（兼容模式）：{attr_dict}")
+                self.update_attributes_display()
+            except Exception as e:
+                self.add_log(f"加载角色属性失败：{str(e)}")
         except Exception as e:
             self.add_log(f"加载角色属性失败：{str(e)}")
     

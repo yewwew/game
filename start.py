@@ -301,8 +301,12 @@ class DiceGameGUI:
                 '幸运': self.attributes['幸运']
             }
             
+            # 将属性数据转换为JSON字符串以确保正确传递
+            import json
+            attr_json = json.dumps(attr_data, ensure_ascii=False)
+            
             # 启动游戏
-            subprocess.Popen([sys.executable, game_path, str(attr_data)])
+            subprocess.Popen([sys.executable, game_path, attr_json])
             
             # 延迟一点时间确保game.py启动，然后关闭start.py
             self.root.after(500, self.close_start)
