@@ -297,13 +297,8 @@ class DiceGameGUI:
     def launch_game(self):
         """启动游戏主程序"""
         try:
-            import subprocess
             import sys
             import os
-            
-            # 获取当前目录
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            game_path = os.path.join(current_dir, "game.py")
             
             # 传递角色属性数据
             attr_data = {
@@ -317,11 +312,15 @@ class DiceGameGUI:
             import json
             attr_json = json.dumps(attr_data, ensure_ascii=False)
             
-            # 启动游戏
-            subprocess.Popen([sys.executable, game_path, attr_json])
+            # 关闭当前窗口
+            self.close_start()
             
-            # 延迟一点时间确保game.py启动，然后关闭start.py
-            self.root.after(500, self.close_start)
+            # 直接导入并启动游戏
+            import game
+            # 设置命令行参数
+            sys.argv = [sys.argv[0], attr_json]
+            # 启动游戏
+            game.main()
             
         except Exception as e:
             messagebox.showerror("错误", f"启动游戏失败：{str(e)}")
