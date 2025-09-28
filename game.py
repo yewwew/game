@@ -31,6 +31,10 @@ class GameMain:
         self.max_magic = 50
         self.choice_count = 0  # 选择计数器
         
+        # Boss状态（持久化）
+        self.boss_max_health = 100
+        self.boss_current_health = 100  # 持久化的boss血量
+        
         # 当前事件
         self.current_event = None
         self.current_choices = []
@@ -326,9 +330,9 @@ class GameMain:
         # 计算玩家战斗属性
         player_stats = self.calculate_battle_stats()
         
-        # Boss属性
+        # Boss属性（使用持久化的血量）
         boss_stats = {
-            'health': 100,
+            'health': self.boss_current_health,  # 使用持久化的boss血量
             'attack': 10,
             'dodge': 0
         }
@@ -586,6 +590,9 @@ class GameMain:
     
     def end_battle(self, victory):
         """结束战斗"""
+        # 保存boss血量状态
+        self.boss_current_health = self.battle_boss_health
+        
         # 禁用战斗按钮
         self.attack_button.config(state='disabled')
         self.defend_button.config(state='disabled')
@@ -594,10 +601,14 @@ class GameMain:
             self.add_battle_log("🎉 战斗胜利！你获得了经验奖励！")
             self.experience += 50
             self.add_log("Boss战斗胜利！获得50经验值")
+            # 如果boss被击败，重置boss血量
+            self.boss_current_health = self.boss_max_health
+            self.add_battle_log("Boss已被击败，血量已重置！")
         else:
             self.add_battle_log("💀 战斗失败！但你从中获得了经验...")
             self.experience += 20
             self.add_log("Boss战斗失败，获得20经验值")
+            self.add_battle_log(f"Boss剩余血量：{self.boss_current_health}")
         
         # 添加关闭按钮
         close_button = tk.Button(
@@ -687,6 +698,16 @@ class GameMain:
             fg='#e67e22'
         )
         self.choice_count_label.pack(anchor='w', pady=2)
+        
+        # Boss血量显示
+        self.boss_health_display_label = tk.Label(
+            self.attr_frame,
+            text=f"👹 Boss血量: {self.boss_current_health}/{self.boss_max_health}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#e74c3c'
+        )
+        self.boss_health_display_label.pack(anchor='w', pady=2)
     
     def update_attributes_display(self):
         """更新属性显示"""
@@ -697,6 +718,7 @@ class GameMain:
         self.magic_label.config(text=f"🔮 魔法值: {self.magic}/{self.max_magic}")
         self.exp_label.config(text=f"⭐ 经验值: {self.experience}")
         self.choice_count_label.config(text=f"🎯 选择次数: {self.choice_count}/3")
+        self.boss_health_display_label.config(text=f"👹 Boss血量: {self.boss_current_health}/{self.boss_max_health}")
     
     def create_game_log(self, parent):
         """创建游戏日志"""
