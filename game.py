@@ -6,6 +6,7 @@ import ast
 import random
 import json
 import os
+from boss_battle import BossBattleUI
 
 class GameMain:
     def __init__(self, root):
@@ -326,22 +327,34 @@ class GameMain:
         }
     
     def start_boss_battle(self):
-        """开始boss战斗"""
-        # 计算玩家战斗属性
-        player_stats = self.calculate_battle_stats()
-        
-        # Boss属性（使用持久化的血量）
-        boss_stats = {
-            'health': self.boss_current_health,  # 使用持久化的boss血量
-            'attack': 10,
-            'dodge': 0
-        }
-        
+        """开始boss战斗（委托至独立模块）"""
         # 重置选择计数
         self.choice_count = 0
-        
-        # 创建战斗窗口
-        self.create_battle_window(player_stats, boss_stats)
+
+        callbacks = {
+            'on_log': self.add_log,
+            'on_battle_end': self._on_boss_battle_end,
+            'get_player_stats': self.calculate_battle_stats,
+            'get_boss_persistent': self._get_boss_persistent,
+            'set_boss_persistent': self._set_boss_persistent,
+            'update_main_attributes': self.update_attributes_display,
+            'on_continue_game': self.show_random_event,
+        }
+
+        # 实例化 Boss 战 UI（独立窗口）
+        self.boss_battle_ui = BossBattleUI(self.root, callbacks)
+
+    def _get_boss_persistent(self):
+        return self.boss_current_health, self.boss_max_health
+
+    def _set_boss_persistent(self, new_health):
+        self.boss_current_health = max(0, min(self.boss_max_health, new_health))
+
+    def _on_boss_battle_end(self, victory, boss_remaining_health, exp_delta):
+        # 由 Boss 模块回调：同步经验与 Boss 血量
+        self.experience += exp_delta
+        self.boss_current_health = boss_remaining_health if boss_remaining_health > 0 else self.boss_max_health
+        self.update_attributes_display()
     
     def create_battle_window(self, player_stats, boss_stats):
         """创建战斗窗口"""
