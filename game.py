@@ -31,6 +31,15 @@ class GameMain:
         self.magic = 50
         self.max_magic = 50
         self.choice_count = 0  # 选择计数器
+        self.event_count = 0  # 事件计数器
+        self.choice_event_count = 0  # 选择事件计数器
+        self.last_negative_event = 0  # 上次负面事件的事件计数
+        
+        # 负面事件列表
+        self.negative_events = [
+            "拖延症发作", "懒惰成性", "社交恐惧症", "学习倦怠", 
+            "身体健康问题", "网络成瘾", "人际关系破裂", "经济困难", "自我怀疑"
+        ]
         
         # Boss状态（持久化）
         self.boss_max_health = 100
@@ -63,10 +72,24 @@ class GameMain:
             
             # 将JSON中的列表格式转换为元组格式（为了兼容现有代码）
             for event_name, event_data in self.event_library.items():
-                for choice in event_data['choices']:
-                    for effect_name, effect_value in choice['effects'].items():
+                # 处理有choices字段的事件
+                if 'choices' in event_data:
+                    for choice in event_data['choices']:
+                        for effect_name, effect_value in choice['effects'].items():
+                            if isinstance(effect_value, list) and len(effect_value) == 2:
+                                choice['effects'][effect_name] = tuple(effect_value)
+                
+                # 处理auto_roll事件
+                if 'auto_roll' in event_data:
+                    auto_roll = event_data['auto_roll']
+                    # 转换success_effects
+                    for effect_name, effect_value in auto_roll.get('success_effects', {}).items():
                         if isinstance(effect_value, list) and len(effect_value) == 2:
-                            choice['effects'][effect_name] = tuple(effect_value)
+                            auto_roll['success_effects'][effect_name] = tuple(effect_value)
+                    # 转换failure_effects
+                    for effect_name, effect_value in auto_roll.get('failure_effects', {}).items():
+                        if isinstance(effect_value, list) and len(effect_value) == 2:
+                            auto_roll['failure_effects'][effect_name] = tuple(effect_value)
             
             print("事件库加载成功！")
             
@@ -166,21 +189,82 @@ class GameMain:
     
     def show_random_event(self):
         """显示随机事件"""
-        # 随机选择一个事件
-        event_name = random.choice(list(self.event_library.keys()))
+        # 增加事件计数
+        self.event_count += 1
+        
+        # 根据选择事件计数决定事件类型
+        if self.choice_event_count >= 5:
+            # 5次选择事件后，检查是否可以触发负面roll点事件
+            can_trigger_negative = (
+                random.random() < 0.15 and  # 15%概率
+                self.event_count - self.last_negative_event >= 3  # 距离上次负面事件至少3次事件
+            )
+            
+            if can_trigger_negative:
+                # 选择负面roll点事件
+                available_negative_events = [event for event in self.negative_events if event in self.event_library]
+                if available_negative_events:
+                    event_name = random.choice(available_negative_events)
+                    self.last_negative_event = self.event_count  # 记录负面事件发生时间
+                    self.add_log(f"触发第{self.event_count}次事件 - 负面roll点事件: {event_name}")
+                else:
+                    # 如果没有可用的负面事件，选择普通事件
+                    positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
+                    if positive_events:
+                        event_name = random.choice(positive_events)
+                        self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
+                    else:
+                        event_name = random.choice(list(self.event_library.keys()))
+                        self.add_log(f"触发第{self.event_count}次事件: {event_name}")
+            else:
+                # 选择普通选择事件
+                positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
+                if positive_events:
+                    event_name = random.choice(positive_events)
+                    self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
+                else:
+                    # 如果没有正面事件，随机选择
+                    event_name = random.choice(list(self.event_library.keys()))
+                    self.add_log(f"触发第{self.event_count}次事件: {event_name}")
+        else:
+            # 前5次只选择普通选择事件
+            positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
+            if positive_events:
+                event_name = random.choice(positive_events)
+                self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
+            else:
+                # 如果没有正面事件，随机选择
+                event_name = random.choice(list(self.event_library.keys()))
+                self.add_log(f"触发第{self.event_count}次事件: {event_name}")
+        
         self.current_event = self.event_library[event_name]
-        self.current_choices = self.current_event["choices"]
         
         # 显示事件描述
         self.event_text.config(state='normal')
         self.event_text.delete(1.0, 'end')
-        self.event_text.insert('end', f"🎮 {event_name}\n\n")
+        if 'choices' in self.current_event:
+            self.event_text.insert('end', f"🎮 {event_name} (第{self.event_count}次事件, 第{self.choice_event_count}次选择事件)\n\n")
+        else:
+            self.event_text.insert('end', f"🎮 {event_name} (第{self.event_count}次事件, Roll点事件)\n\n")
         self.event_text.insert('end', f"{self.current_event['description']}\n\n")
-        self.event_text.insert('end', "请选择你的行动...")
-        self.event_text.config(state='disabled')
         
-        # 更新选择按钮
-        self.update_dynamic_choices()
+        # 检查是否是自动roll点事件
+        if "auto_roll" in self.current_event:
+            # 处理自动roll点事件
+            self.handle_auto_roll_event(self.current_event)
+            return
+        else:
+            # 普通事件，显示选择
+            if "choices" in self.current_event:
+                self.current_choices = self.current_event["choices"]
+                self.event_text.insert('end', "请选择你的行动...")
+                self.event_text.config(state='disabled')
+                self.update_dynamic_choices()
+            else:
+                # 没有choices字段的事件，显示提示
+                self.current_choices = []
+                self.event_text.insert('end', "\n\n按任意键继续...")
+                self.event_text.config(state='disabled')
     
     def show_dynamic_choices(self):
         """显示动态选择按钮"""
@@ -219,15 +303,65 @@ class GameMain:
         
         # 增加选择计数
         self.choice_count += 1
+        # 增加选择事件计数
+        self.choice_event_count += 1
         
-        # 应用效果
-        self.apply_effects(choice["effects"])
+        # 应用效果并获取修改信息
+        changes = self.apply_effects(choice["effects"])
         
         # 显示结果界面
-        self.show_choice_result(choice)
+        self.show_choice_result(choice, changes)
+    
+    def handle_auto_roll_event(self, event_data):
+        """处理自动roll点事件"""
+        auto_roll = event_data.get("auto_roll")
+        if not auto_roll:
+            return False
+        
+        # 增加选择计数
+        self.choice_count += 1
+        
+        # 解析成功概率公式
+        success_prob = self.calculate_success_probability(auto_roll["success_probability"])
+        
+        # 进行roll点
+        roll_result = random.randint(1, 100)
+        success = roll_result <= success_prob
+        
+        if success:
+            # 成功效果
+            changes = self.apply_effects(auto_roll["success_effects"])
+            description = auto_roll["success_description"]
+            self.add_log(f"🎯 Roll点成功！({roll_result}/{success_prob})")
+        else:
+            # 失败效果
+            changes = self.apply_effects(auto_roll["failure_effects"])
+            description = auto_roll["failure_description"]
+            self.add_log(f"❌ Roll点失败！({roll_result}/{success_prob})")
+        
+        # 显示结果
+        self.show_auto_roll_result(description, changes)
+        return True
+    
+    def calculate_success_probability(self, formula):
+        """计算成功概率"""
+        try:
+            # 替换公式中的属性名称为实际值
+            formula_str = formula
+            for attr_name, attr_value in self.attributes.items():
+                formula_str = formula_str.replace(attr_name, str(attr_value))
+            
+            # 计算概率（限制在1-100之间）
+            probability = eval(formula_str)
+            return max(1, min(100, int(probability)))
+        except:
+            # 如果计算出错，返回默认概率
+            return 50
     
     def apply_effects(self, effects):
-        """应用选择效果"""
+        """应用选择效果，返回修改信息"""
+        changes = []  # 存储所有修改信息
+        
         for effect, value in effects.items():
             if effect in self.attributes:
                 # 属性效果
@@ -236,7 +370,8 @@ class GameMain:
                 else:
                     change = value
                 self.attributes[effect] += change
-                self.add_log(f"{effect} +{change} (当前: {self.attributes[effect]})")
+                changes.append(f"{effect} {change:+d} (当前: {self.attributes[effect]})")
+                self.add_log(f"{effect} {change:+d} (当前: {self.attributes[effect]})")
             elif effect == "health":
                 # 生命值效果
                 if isinstance(value, tuple):
@@ -244,7 +379,8 @@ class GameMain:
                 else:
                     change = value
                 self.health = min(self.max_health, self.health + change)
-                self.add_log(f"生命值 +{change} (当前: {self.health})")
+                changes.append(f"生命值 {change:+d} (当前: {self.health})")
+                self.add_log(f"生命值 {change:+d} (当前: {self.health})")
             elif effect == "magic":
                 # 魔法值效果
                 if isinstance(value, tuple):
@@ -252,7 +388,8 @@ class GameMain:
                 else:
                     change = value
                 self.magic = min(self.max_magic, self.magic + change)
-                self.add_log(f"魔法值 +{change} (当前: {self.magic})")
+                changes.append(f"魔法值 {change:+d} (当前: {self.magic})")
+                self.add_log(f"魔法值 {change:+d} (当前: {self.magic})")
             elif effect == "experience":
                 # 经验值效果
                 if isinstance(value, tuple):
@@ -260,21 +397,50 @@ class GameMain:
                 else:
                     change = value
                 self.experience += change
-                self.add_log(f"经验值 +{change} (当前: {self.experience})")
+                changes.append(f"经验值 {change:+d} (当前: {self.experience})")
+                self.add_log(f"经验值 {change:+d} (当前: {self.experience})")
         
         # 更新属性显示
         self.update_attributes_display()
+        
+        return changes
     
-    def show_choice_result(self, choice):
+    def show_choice_result(self, choice, changes):
         """显示选择结果"""
         self.event_text.config(state='normal')
         self.event_text.delete(1.0, 'end')
         self.event_text.insert('end', f"✅ 选择结果\n\n")
         self.event_text.insert('end', f"{choice['description']}\n\n")
-        #self.event_text.insert('end', "点击下方按钮继续你的冒险...")
+        
+        # 显示属性修改
+        if changes:
+            self.event_text.insert('end', "📊 属性变化：\n")
+            for change in changes:
+                self.event_text.insert('end', f"• {change}\n")
+            self.event_text.insert('end', "\n")
+        
         self.event_text.config(state='disabled')
         
         # 更新选择按钮为继续按钮
+        self.show_continue_button()
+    
+    def show_auto_roll_result(self, description, changes):
+        """显示自动roll点结果"""
+        self.event_text.config(state='normal')
+        # 不清空现有内容，在现有内容基础上添加结果
+        self.event_text.insert('end', f"\n🎲 自动Roll点结果\n\n")
+        self.event_text.insert('end', f"{description}\n\n")
+        
+        # 显示属性修改
+        if changes:
+            self.event_text.insert('end', "📊 属性变化：\n")
+            for change in changes:
+                self.event_text.insert('end', f"• {change}\n")
+            self.event_text.insert('end', "\n")
+        
+        self.event_text.config(state='disabled')
+        
+        # 显示继续按钮
         self.show_continue_button()
     
     def show_continue_button(self):
@@ -302,7 +468,7 @@ class GameMain:
         self.add_log("继续冒险...")
         
         # 检查是否需要触发boss战斗
-        if self.choice_count >= 3:
+        if self.choice_count >= 10:
             self.add_log("⚠️ 你感受到了强大的威胁...")
             self.start_boss_battle()
         else:
@@ -356,295 +522,6 @@ class GameMain:
         self.boss_current_health = boss_remaining_health if boss_remaining_health > 0 else self.boss_max_health
         self.update_attributes_display()
     
-    def create_battle_window(self, player_stats, boss_stats):
-        """创建战斗窗口"""
-        # 创建新窗口
-        self.battle_window = tk.Toplevel(self.root)
-        self.battle_window.title("⚔️ Boss战斗")
-        self.battle_window.geometry("800x600")
-        self.battle_window.configure(bg='#2c3e50')
-        self.battle_window.resizable(False, False)
-        
-        # 战斗状态
-        self.battle_player_health = player_stats['health']
-        self.battle_player_magic = player_stats['magic']
-        self.battle_player_attack = player_stats['attack']
-        self.battle_player_dodge = player_stats['dodge']
-        
-        self.battle_boss_health = boss_stats['health']
-        self.battle_boss_attack = boss_stats['attack']
-        self.battle_boss_dodge = boss_stats['dodge']
-        
-        self.battle_turn = 0  # 0=玩家回合，1=Boss回合
-        
-        # 创建战斗界面
-        self.create_battle_interface()
-        
-        # 显示战斗开始信息
-        self.add_battle_log("⚔️ Boss战斗开始！")
-        self.add_battle_log(f"你的属性：血量{self.battle_player_health}，攻击{self.battle_player_attack}，闪避{self.battle_player_dodge}%")
-        self.add_battle_log(f"Boss属性：血量{self.battle_boss_health}，攻击{self.battle_boss_attack}")
-        self.add_battle_log("战斗开始！")
-    
-    def create_battle_interface(self):
-        """创建战斗界面"""
-        # 标题
-        title_label = tk.Label(
-            self.battle_window,
-            text="⚔️ Boss战斗",
-            font=("Arial", 24, "bold"),
-            bg='#2c3e50',
-            fg='#ecf0f1'
-        )
-        title_label.pack(pady=20)
-        
-        # 主框架
-        main_frame = tk.Frame(self.battle_window, bg='#2c3e50')
-        main_frame.pack(expand=True, fill='both', padx=20, pady=20)
-        
-        # 左侧 - 战斗状态
-        left_frame = tk.Frame(main_frame, bg='#34495e', relief='raised', bd=2)
-        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
-        
-        # 玩家状态
-        player_frame = tk.Frame(left_frame, bg='#34495e')
-        player_frame.pack(fill='x', padx=20, pady=10)
-        
-        tk.Label(
-            player_frame,
-            text="👤 玩家状态",
-            font=("Arial", 16, "bold"),
-            bg='#34495e',
-            fg='#3498db'
-        ).pack(anchor='w')
-        
-        self.player_health_label = tk.Label(
-            player_frame,
-            text=f"❤️ 血量: {self.battle_player_health}",
-            font=("Arial", 12),
-            bg='#34495e',
-            fg='#e74c3c'
-        )
-        self.player_health_label.pack(anchor='w')
-        
-        self.player_magic_label = tk.Label(
-            player_frame,
-            text=f"🔮 魔法: {self.battle_player_magic}",
-            font=("Arial", 12),
-            bg='#34495e',
-            fg='#9b59b6'
-        )
-        self.player_magic_label.pack(anchor='w')
-        
-        self.player_attack_label = tk.Label(
-            player_frame,
-            text=f"⚔️ 攻击: {self.battle_player_attack}",
-            font=("Arial", 12),
-            bg='#34495e',
-            fg='#f39c12'
-        )
-        self.player_attack_label.pack(anchor='w')
-        
-        # Boss状态
-        boss_frame = tk.Frame(left_frame, bg='#34495e')
-        boss_frame.pack(fill='x', padx=20, pady=10)
-        
-        tk.Label(
-            boss_frame,
-            text="👹 Boss状态",
-            font=("Arial", 16, "bold"),
-            bg='#34495e',
-            fg='#e74c3c'
-        ).pack(anchor='w')
-        
-        self.boss_health_label = tk.Label(
-            boss_frame,
-            text=f"❤️ 血量: {self.battle_boss_health}",
-            font=("Arial", 12),
-            bg='#34495e',
-            fg='#e74c3c'
-        )
-        self.boss_health_label.pack(anchor='w')
-        
-        self.boss_attack_label = tk.Label(
-            boss_frame,
-            text=f"⚔️ 攻击: {self.battle_boss_attack}",
-            font=("Arial", 12),
-            bg='#34495e',
-            fg='#f39c12'
-        )
-        self.boss_attack_label.pack(anchor='w')
-        
-        # 右侧 - 战斗日志和操作
-        right_frame = tk.Frame(main_frame, bg='#34495e', relief='raised', bd=2)
-        right_frame.pack(side='right', fill='both', expand=True, padx=(10, 0))
-        
-        # 战斗日志
-        tk.Label(
-            right_frame,
-            text="📝 战斗日志",
-            font=("Arial", 16, "bold"),
-            bg='#34495e',
-            fg='#ecf0f1'
-        ).pack(pady=15)
-        
-        self.battle_log_text = tk.Text(
-            right_frame,
-            height=20,
-            width=40,
-            font=("Arial", 10),
-            bg='#2c3e50',
-            fg='#ecf0f1',
-            wrap='word',
-            state='disabled'
-        )
-        self.battle_log_text.pack(padx=20, pady=10)
-        
-        # 战斗操作按钮
-        self.battle_action_frame = tk.Frame(right_frame, bg='#34495e')
-        self.battle_action_frame.pack(fill='x', padx=20, pady=10)
-        
-        # 攻击按钮
-        self.attack_button = tk.Button(
-            self.battle_action_frame,
-            text="⚔️ 攻击",
-            font=("Arial", 14, "bold"),
-            bg='#e74c3c',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=self.player_attack,
-            height=2
-        )
-        self.attack_button.pack(fill='x', pady=5)
-        
-        # 防御按钮
-        self.defend_button = tk.Button(
-            self.battle_action_frame,
-            text="🛡️ 防御",
-            font=("Arial", 14, "bold"),
-            bg='#3498db',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=self.player_defend,
-            height=2
-        )
-        self.defend_button.pack(fill='x', pady=5)
-    
-    def add_battle_log(self, message):
-        """添加战斗日志"""
-        self.battle_log_text.config(state='normal')
-        self.battle_log_text.insert('end', f"{message}\n")
-        self.battle_log_text.see('end')
-        self.battle_log_text.config(state='disabled')
-    
-    def update_battle_display(self):
-        """更新战斗显示"""
-        self.player_health_label.config(text=f"❤️ 血量: {self.battle_player_health}")
-        self.player_magic_label.config(text=f"🔮 魔法: {self.battle_player_magic}")
-        self.player_attack_label.config(text=f"⚔️ 攻击: {self.battle_player_attack}")
-        self.boss_health_label.config(text=f"❤️ 血量: {self.battle_boss_health}")
-        self.boss_attack_label.config(text=f"⚔️ 攻击: {self.battle_boss_attack}")
-    
-    def player_attack(self):
-        """玩家攻击"""
-        # 检查闪避
-        if random.randint(1, 100) <= self.battle_boss_dodge:
-            self.add_battle_log("Boss闪避了你的攻击！")
-        else:
-            damage = self.battle_player_attack
-            self.battle_boss_health -= damage
-            self.add_battle_log(f"你对Boss造成了{damage}点伤害！")
-        
-        self.update_battle_display()
-        
-        # 检查Boss是否死亡
-        if self.battle_boss_health <= 0:
-            self.battle_boss_health = 0
-            self.add_battle_log("🎉 你击败了Boss！")
-            self.end_battle(True)
-            return
-        
-        # Boss回合
-        self.boss_turn()
-    
-    def player_defend(self):
-        """玩家防御"""
-        self.add_battle_log("你选择了防御，减少50%伤害")
-        # Boss回合，但伤害减半
-        self.boss_turn(defending=True)
-    
-    def boss_turn(self, defending=False):
-        """Boss回合"""
-        # 检查玩家闪避
-        if random.randint(1, 100) <= self.battle_player_dodge:
-            self.add_battle_log("你闪避了Boss的攻击！")
-        else:
-            damage = self.battle_boss_attack
-            if defending:
-                damage = damage // 2
-                self.add_battle_log(f"Boss攻击了你，但由于防御只造成{damage}点伤害！")
-            else:
-                self.add_battle_log(f"Boss攻击了你，造成{damage}点伤害！")
-            
-            self.battle_player_health -= damage
-        
-        self.update_battle_display()
-        
-        # 检查玩家是否死亡
-        if self.battle_player_health <= 0:
-            self.battle_player_health = 0
-            self.add_battle_log("💀 你被Boss击败了！")
-            self.end_battle(False)
-            return
-        
-        self.add_battle_log("轮到你的回合了...")
-    
-    def end_battle(self, victory):
-        """结束战斗"""
-        # 保存boss血量状态
-        self.boss_current_health = self.battle_boss_health
-        
-        # 禁用战斗按钮
-        self.attack_button.config(state='disabled')
-        self.defend_button.config(state='disabled')
-        
-        if victory:
-            self.add_battle_log("🎉 战斗胜利！你获得了经验奖励！")
-            self.experience += 50
-            self.add_log("Boss战斗胜利！获得50经验值")
-            # 如果boss被击败，重置boss血量
-            self.boss_current_health = self.boss_max_health
-            self.add_battle_log("Boss已被击败，血量已重置！")
-        else:
-            self.add_battle_log("💀 战斗失败！但你从中获得了经验...")
-            self.experience += 20
-            self.add_log("Boss战斗失败，获得20经验值")
-            self.add_battle_log(f"Boss剩余血量：{self.boss_current_health}")
-        
-        # 添加关闭按钮
-        close_button = tk.Button(
-            self.battle_action_frame,
-            text="🚪 关闭战斗窗口",
-            font=("Arial", 14, "bold"),
-            bg='#27ae60',
-            fg='white',
-            relief='raised',
-            bd=3,
-            command=self.close_battle_window,
-            height=2
-        )
-        close_button.pack(fill='x', pady=10)
-        
-        # 更新主游戏属性显示
-        self.update_attributes_display()
-    
-    def close_battle_window(self):
-        """关闭战斗窗口"""
-        self.battle_window.destroy()
-        # 继续游戏
-        self.show_random_event()
     
     def create_attributes_display(self, parent):
         """创建属性显示区域"""
