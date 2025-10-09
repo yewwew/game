@@ -582,7 +582,7 @@ class GameMain:
         
         self.choice_count_label = tk.Label(
             self.attr_frame,
-            text=f"🎯 选择次数: {self.choice_count}/3",
+            text=f"🎯 选择次数: {self.choice_count}/10",
             font=("Arial", 12),
             bg='#34495e',
             fg='#e67e22'
@@ -607,7 +607,7 @@ class GameMain:
         self.health_label.config(text=f"❤️ 生命值: {self.health}/{self.max_health}")
         self.magic_label.config(text=f"🔮 魔法值: {self.magic}/{self.max_magic}")
         self.exp_label.config(text=f"⭐ 经验值: {self.experience}")
-        self.choice_count_label.config(text=f"🎯 选择次数: {self.choice_count}/3")
+        self.choice_count_label.config(text=f"🎯 选择次数: {self.choice_count}/10")
         self.boss_health_display_label.config(text=f"👹 Boss血量: {self.boss_current_health}/{self.boss_max_health}")
     
     def create_game_log(self, parent):
