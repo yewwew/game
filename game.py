@@ -8,6 +8,13 @@ import json
 import os
 from boss_battle import BossBattleUI
 
+# 事件效果键名映射（向后兼容中文键）
+EFFECT_KEY_MAP = {
+    "经验": "experience",
+    "生命值": "health",
+    "魔法值": "magic",
+}
+
 class GameMain:
     def __init__(self, root):
         self.root = root
@@ -34,6 +41,14 @@ class GameMain:
         self.event_count = 0  # 事件计数器
         self.choice_event_count = 0  # 选择事件计数器
         self.last_negative_event = 0  # 上次负面事件的事件计数
+        
+        # 事件元数据与状态
+        self.event_meta = {}  # {name: {weight,cooldown,once,min_level,max_level,requires,excludes,tags}}
+        self.event_trigger_count = {}  # {name: count}
+        self.event_last_seen = {}  # {name: last_event_index}
+        self.flags = set()  # 如：见过_事件名
+        self.current_event_name = None
+        self.debug_show_event_meta = False  # 调试: 是否在描述中展示元信息
         
         # 负面事件列表
         self.negative_events = [
@@ -90,6 +105,22 @@ class GameMain:
                     for effect_name, effect_value in auto_roll.get('failure_effects', {}).items():
                         if isinstance(effect_value, list) and len(effect_value) == 2:
                             auto_roll['failure_effects'][effect_name] = tuple(effect_value)
+            
+            # 解析扩展元数据（向后兼容默认值）
+            for event_name, event_data in self.event_library.items():
+                meta = {
+                    'tags': event_data.get('tags', []),
+                    'weight': int(event_data.get('weight', 1) or 1),
+                    'cooldown': int(event_data.get('cooldown', 0) or 0),
+                    'once': bool(event_data.get('once', False)),
+                    'min_level': int(event_data.get('min_level', 1) or 1),
+                    'max_level': int(event_data.get('max_level', 999) or 999),
+                    'requires': event_data.get('requires', {}),
+                    'excludes': event_data.get('excludes', []),
+                }
+                self.event_meta[event_name] = meta
+                self.event_trigger_count.setdefault(event_name, 0)
+                self.event_last_seen.setdefault(event_name, -10**9)
             
             print("事件库加载成功！")
             
@@ -188,64 +219,38 @@ class GameMain:
         self.choice_frame.pack(fill='x', padx=20, pady=10)
     
     def show_random_event(self):
-        """显示随机事件"""
+        """显示随机事件（加入权重/冷却/前置/互斥提示/节律）"""
         # 增加事件计数
         self.event_count += 1
         
-        # 根据选择事件计数决定事件类型
-        if self.choice_event_count >= 5:
-            # 5次选择事件后，检查是否可以触发负面roll点事件
-            can_trigger_negative = (
-                random.random() < 0.15 and  # 15%概率
-                self.event_count - self.last_negative_event >= 3  # 距离上次负面事件至少3次事件
-            )
-            
-            if can_trigger_negative:
-                # 选择负面roll点事件
-                available_negative_events = [event for event in self.negative_events if event in self.event_library]
-                if available_negative_events:
-                    event_name = random.choice(available_negative_events)
-                    self.last_negative_event = self.event_count  # 记录负面事件发生时间
-                    self.add_log(f"触发第{self.event_count}次事件 - 负面roll点事件: {event_name}")
-                else:
-                    # 如果没有可用的负面事件，选择普通事件
-                    positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
-                    if positive_events:
-                        event_name = random.choice(positive_events)
-                        self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
-                    else:
-                        event_name = random.choice(list(self.event_library.keys()))
-                        self.add_log(f"触发第{self.event_count}次事件: {event_name}")
-            else:
-                # 选择普通选择事件
-                positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
-                if positive_events:
-                    event_name = random.choice(positive_events)
-                    self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
-                else:
-                    # 如果没有正面事件，随机选择
-                    event_name = random.choice(list(self.event_library.keys()))
-                    self.add_log(f"触发第{self.event_count}次事件: {event_name}")
+        event_name, is_negative = self._select_next_event_name()
+        if is_negative:
+            self.last_negative_event = self.event_count
+            self.add_log(f"触发第{self.event_count}次事件 - 负面roll点事件: {event_name}")
         else:
-            # 前5次只选择普通选择事件
-            positive_events = [event for event in self.event_library.keys() if event not in self.negative_events and 'choices' in self.event_library[event]]
-            if positive_events:
-                event_name = random.choice(positive_events)
-                self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
-            else:
-                # 如果没有正面事件，随机选择
-                event_name = random.choice(list(self.event_library.keys()))
-                self.add_log(f"触发第{self.event_count}次事件: {event_name}")
+            self.add_log(f"触发第{self.event_count}次事件 - 选择事件: {event_name}")
         
+        # 记录旗标与触发历史
+        self.flags.add(f"见过_{event_name}")
+        self.event_trigger_count[event_name] = self.event_trigger_count.get(event_name, 0) + 1
+        self.event_last_seen[event_name] = self.event_count
+        
+        self.current_event_name = event_name
         self.current_event = self.event_library[event_name]
         
         # 显示事件描述
         self.event_text.config(state='normal')
         self.event_text.delete(1.0, 'end')
         if 'choices' in self.current_event:
-            self.event_text.insert('end', f"🎮 {event_name} (第{self.event_count}次事件, 第{self.choice_event_count}次选择事件)\n\n")
+            header = f"🎮 {event_name} (第{self.event_count}次事件, 第{self.choice_event_count}次选择事件)"
         else:
-            self.event_text.insert('end', f"🎮 {event_name} (第{self.event_count}次事件, Roll点事件)\n\n")
+            header = f"🎮 {event_name} (第{self.event_count}次事件, Roll点事件)"
+        if self.debug_show_event_meta:
+            meta = self.event_meta.get(event_name, {})
+            tags = "|".join(meta.get('tags', [])) if meta.get('tags') else ""
+            extra = f" [权重{meta.get('weight',1)}|冷却{meta.get('cooldown',0)}{('|' + tags) if tags else ''}]"
+            header += extra
+        self.event_text.insert('end', header + "\n\n")
         self.event_text.insert('end', f"{self.current_event['description']}\n\n")
         
         # 检查是否是自动roll点事件
@@ -265,6 +270,101 @@ class GameMain:
                 self.current_choices = []
                 self.event_text.insert('end', "\n\n按任意键继续...")
                 self.event_text.config(state='disabled')
+
+    def _select_next_event_name(self):
+        """选择下一个事件名，返回 (event_name, is_negative)"""
+        # 是否考虑负面事件
+        consider_negative = False
+        if self.choice_event_count >= 5:
+            consider_negative = (random.random() < 0.15 and (self.event_count - self.last_negative_event) >= 3)
+        
+        level = self._get_progress_level()
+        
+        def event_available(name):
+            meta = self.event_meta.get(name, {})
+            # 一次性
+            if meta.get('once') and self.event_trigger_count.get(name, 0) > 0:
+                return False
+            # 冷却
+            if self.event_count - self.event_last_seen.get(name, -10**9) < meta.get('cooldown', 0):
+                return False
+            # 等级范围
+            if level < meta.get('min_level', 1) or level > meta.get('max_level', 999):
+                return False
+            # 前置
+            if not self._check_requires(meta.get('requires', {})):
+                return False
+            return True
+        
+        positive_candidates = [n for n in self.event_library.keys() if n not in self.negative_events and 'choices' in self.event_library[n] and event_available(n)]
+        negative_candidates = [n for n in self.negative_events if n in self.event_library and event_available(n)]
+        
+        if self.choice_event_count < 5:
+            consider_negative = False
+        
+        def weighted_choice(names):
+            if not names:
+                return None
+            weights = [max(1, int(self.event_meta.get(n, {}).get('weight', 1))) for n in names]
+            total = sum(weights)
+            r = random.randint(1, total)
+            cum = 0
+            for n, w in zip(names, weights):
+                cum += w
+                if r <= cum:
+                    return n
+            return names[-1]
+        
+        if consider_negative and negative_candidates:
+            name = weighted_choice(negative_candidates)
+            if name:
+                return name, True
+        
+        if positive_candidates:
+            name = weighted_choice(positive_candidates)
+            if name:
+                return name, False
+        
+        any_name = random.choice(list(self.event_library.keys()))
+        return any_name, (any_name in self.negative_events)
+
+    def _get_progress_level(self):
+        """简单的进度等级（以选择次数近似）"""
+        return max(1, self.choice_event_count)
+
+    def _check_requires(self, requires):
+        if not requires:
+            return True
+        attr_reqs = requires.get('attributes', {}) or {}
+        for attr_name, expr in attr_reqs.items():
+            if not self._eval_attr_condition(attr_name, expr):
+                return False
+        flags_all = requires.get('flags_all', []) or []
+        for flag in flags_all:
+            if flag not in self.flags:
+                return False
+        flags_any = requires.get('flags_any', []) or []
+        if flags_any and not any(flag in self.flags for flag in flags_any):
+            return False
+        return True
+
+    def _eval_attr_condition(self, attr_name, expr):
+        try:
+            value = self.attributes.get(attr_name, 0)
+            expr = str(expr).strip()
+            if expr.startswith('>='):
+                return value >= int(expr[2:])
+            if expr.startswith('>'):
+                return value > int(expr[1:])
+            if expr.startswith('<='):
+                return value <= int(expr[2:])
+            if expr.startswith('<'):
+                return value < int(expr[1:])
+            if expr.startswith('=='):
+                return value == int(expr[2:])
+            return value == int(expr)
+        except:
+            return True
     
     def show_dynamic_choices(self):
         """显示动态选择按钮"""
@@ -278,6 +378,19 @@ class GameMain:
         
         if not self.current_choices:
             return
+        
+        # 互斥提醒（不透露具体对象）
+        meta = self.event_meta.get(self.current_event_name or '', {})
+        excludes = meta.get('excludes', []) if meta else []
+        if excludes:
+            warning_label = tk.Label(
+                self.choice_frame,
+                text="⚠️ 该选择可能限制后续路线，慎重选择",
+                font=("Arial", 10, "bold"),
+                bg='#34495e',
+                fg='#f39c12'
+            )
+            warning_label.pack(fill='x', pady=(0, 8))
         
         # 创建4个选择按钮
         colors = ['#3498db', '#e74c3c', '#f39c12', '#27ae60']
@@ -358,11 +471,33 @@ class GameMain:
             # 如果计算出错，返回默认概率
             return 50
     
+    def required_exp_for_next_level(self):
+        """计算下一等级所需经验。规则：0->1 需100点；随等级递增，每级增加100。"""
+        return (self.level + 1) * 100
+
+    def check_and_apply_level_ups(self):
+        """检查并处理升级：经验达阈值则升级，所有属性+3，可连跳多级。"""
+        leveled = False
+        while self.experience >= self.required_exp_for_next_level():
+            need = self.required_exp_for_next_level()
+            self.experience -= need
+            self.level += 1
+            # 所有基础属性+3
+            for key in list(self.attributes.keys()):
+                self.attributes[key] += 3
+            leveled = True
+            self.add_log(f"🎉 升级！当前等级 {self.level}，所有属性 +3")
+        if leveled:
+            # 同步属性显示由调用方统一触发
+            pass
+
     def apply_effects(self, effects):
         """应用选择效果，返回修改信息"""
         changes = []  # 存储所有修改信息
         
         for effect, value in effects.items():
+            # 中文键名兼容
+            effect_internal = EFFECT_KEY_MAP.get(effect, effect)
             if effect in self.attributes:
                 # 属性效果
                 if isinstance(value, tuple):
@@ -372,7 +507,7 @@ class GameMain:
                 self.attributes[effect] += change
                 changes.append(f"{effect} {change:+d} (当前: {self.attributes[effect]})")
                 self.add_log(f"{effect} {change:+d} (当前: {self.attributes[effect]})")
-            elif effect == "health":
+            elif effect_internal == "health":
                 # 生命值效果
                 if isinstance(value, tuple):
                     change = random.randint(value[0], value[1])
@@ -381,7 +516,7 @@ class GameMain:
                 self.health = min(self.max_health, self.health + change)
                 changes.append(f"生命值 {change:+d} (当前: {self.health})")
                 self.add_log(f"生命值 {change:+d} (当前: {self.health})")
-            elif effect == "magic":
+            elif effect_internal == "magic":
                 # 魔法值效果
                 if isinstance(value, tuple):
                     change = random.randint(value[0], value[1])
@@ -390,7 +525,7 @@ class GameMain:
                 self.magic = min(self.max_magic, self.magic + change)
                 changes.append(f"魔法值 {change:+d} (当前: {self.magic})")
                 self.add_log(f"魔法值 {change:+d} (当前: {self.magic})")
-            elif effect == "experience":
+            elif effect_internal == "experience":
                 # 经验值效果
                 if isinstance(value, tuple):
                     change = random.randint(value[0], value[1])
@@ -400,7 +535,8 @@ class GameMain:
                 changes.append(f"经验值 {change:+d} (当前: {self.experience})")
                 self.add_log(f"经验值 {change:+d} (当前: {self.experience})")
         
-        # 更新属性显示
+        # 升级检查与显示更新
+        self.check_and_apply_level_ups()
         self.update_attributes_display()
         
         return changes
@@ -579,6 +715,22 @@ class GameMain:
             fg='#f39c12'
         )
         self.exp_label.pack(anchor='w', pady=2)
+        self.level_label = tk.Label(
+            self.attr_frame,
+            text=f"🏅 等级: {self.level}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#ecf0f1'
+        )
+        self.level_label.pack(anchor='w', pady=2)
+        self.next_exp_label = tk.Label(
+            self.attr_frame,
+            text=f"⬆️ 下一级需求: {self.required_exp_for_next_level()} 经验",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#ecf0f1'
+        )
+        self.next_exp_label.pack(anchor='w', pady=2)
         
         self.choice_count_label = tk.Label(
             self.attr_frame,
@@ -607,6 +759,10 @@ class GameMain:
         self.health_label.config(text=f"❤️ 生命值: {self.health}/{self.max_health}")
         self.magic_label.config(text=f"🔮 魔法值: {self.magic}/{self.max_magic}")
         self.exp_label.config(text=f"⭐ 经验值: {self.experience}")
+        if hasattr(self, 'level_label'):
+            self.level_label.config(text=f"🏅 等级: {self.level}")
+        if hasattr(self, 'next_exp_label'):
+            self.next_exp_label.config(text=f"⬆️ 下一级需求: {self.required_exp_for_next_level()} 经验")
         self.choice_count_label.config(text=f"🎯 选择次数: {self.choice_count}/10")
         self.boss_health_display_label.config(text=f"👹 Boss血量: {self.boss_current_health}/{self.boss_max_health}")
     
