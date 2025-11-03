@@ -37,7 +37,7 @@ class GameMain:
         self.max_health = 100
         self.magic = 50
         self.max_magic = 50
-        self.choice_count = 0  # 选择计数器
+        self.choice_count = 0  # 选择计数器（当前阶段内）
         self.event_count = 0  # 事件计数器
         self.choice_event_count = 0  # 选择事件计数器
         self.last_negative_event = 0  # 上次负面事件的事件计数
@@ -56,9 +56,18 @@ class GameMain:
             "身体健康问题", "网络成瘾", "人际关系破裂", "经济困难", "自我怀疑"
         ]
         
-        # Boss状态（持久化）
-        self.boss_max_health = 100
-        self.boss_current_health = 100  # 持久化的boss血量
+        # 阶段配置与Boss状态
+        self.stages = [
+            {"name": "幼儿园", "event_limit": 10, "boss_hp": 80,  "reward": {"体质": 1, "智力": 1, "情商": 1, "幸运": 1}},
+            {"name": "小学",   "event_limit": 15, "boss_hp": 120, "reward": {"体质": 1, "智力": 1, "情商": 1, "幸运": 1}},
+            {"name": "中学",   "event_limit": 20, "boss_hp": 160, "reward": {"体质": 2, "智力": 1, "情商": 1, "幸运": 1}},
+            {"name": "高中",   "event_limit": 20, "boss_hp": 200, "reward": {"体质": 1, "智力": 2, "情商": 1, "幸运": 1}},
+            {"name": "大学",   "event_limit": 30, "boss_hp": 260, "reward": {"体质": 1, "智力": 2, "情商": 2, "幸运": 1}},
+            {"name": "工作",   "event_limit": 10, "boss_hp": 300, "reward": {"体质": 2, "智力": 2, "情商": 2, "幸运": 2}},
+        ]
+        self.current_stage_index = 0
+        self.boss_max_health = self.stages[self.current_stage_index]["boss_hp"]
+        self.boss_current_health = self.boss_max_health
         
         # 当前事件
         self.current_event = None
@@ -151,14 +160,14 @@ class GameMain:
     
     def create_widgets(self):
         # 主标题
-        title_label = tk.Label(
+        self.title_label = tk.Label(
             self.root,
-            text="🎮 游戏主界面",
+            text=f"🗺️ 当前阶段: {self.stages[self.current_stage_index]['name']}",
             font=("Arial", 24, "bold"),
             bg='#2c3e50',
             fg='#ecf0f1'
         )
-        title_label.pack(pady=20)
+        self.title_label.pack(pady=20)
         
         # 主框架
         main_frame = tk.Frame(self.root, bg='#2c3e50')
@@ -294,6 +303,13 @@ class GameMain:
             # 前置
             if not self._check_requires(meta.get('requires', {})):
                 return False
+            # 阶段筛选：若设置了 stage= 标签，则必须匹配当前阶段
+            tags = meta.get('tags', []) or []
+            current_stage_name = self.stages[self.current_stage_index]['name'] if hasattr(self, 'stages') else None
+            stage_tags = [t for t in tags if isinstance(t, str) and t.startswith('stage=')]
+            if stage_tags and current_stage_name:
+                if f"stage={current_stage_name}" not in stage_tags:
+                    return False
             return True
         
         positive_candidates = [n for n in self.event_library.keys() if n not in self.negative_events and 'choices' in self.event_library[n] and event_available(n)]
@@ -603,9 +619,10 @@ class GameMain:
         """继续冒险，显示下一个随机事件"""
         self.add_log("继续冒险...")
         
-        # 检查是否需要触发boss战斗
-        if self.choice_count >= 10:
-            self.add_log("⚠️ 你感受到了强大的威胁...")
+        # 按阶段检查是否需要触发boss战斗
+        stage = self.stages[self.current_stage_index]
+        if self.choice_count >= stage['event_limit']:
+            self.add_log(f"⚠️ {stage['name']}阶段的Boss正在靠近...")
             self.start_boss_battle()
         else:
             self.show_random_event()
@@ -630,8 +647,10 @@ class GameMain:
     
     def start_boss_battle(self):
         """开始boss战斗（委托至独立模块）"""
-        # 重置选择计数
-        self.choice_count = 0
+        # 锁定当前阶段Boss血量并准备战斗（每阶段只战一次）
+        stage = self.stages[self.current_stage_index]
+        self.boss_max_health = stage['boss_hp']
+        self.boss_current_health = self.boss_max_health
 
         callbacks = {
             'on_log': self.add_log,
@@ -653,9 +672,32 @@ class GameMain:
         self.boss_current_health = max(0, min(self.boss_max_health, new_health))
 
     def _on_boss_battle_end(self, victory, boss_remaining_health, exp_delta):
-        # 由 Boss 模块回调：同步经验与 Boss 血量
+        # 由 Boss 模块回调：同步经验
         self.experience += exp_delta
-        self.boss_current_health = boss_remaining_health if boss_remaining_health > 0 else self.boss_max_health
+
+        # 结算与阶段推进
+        stage = self.stages[self.current_stage_index]
+        if victory:
+            reward = stage.get('reward', {})
+            if reward:
+                for attr_name, delta in reward.items():
+                    if attr_name in self.attributes:
+                        self.attributes[attr_name] += int(delta)
+                self.add_log(f"🎁 击败{stage['name']}Boss，获得属性奖励：" + ", ".join([f"{k}+{v}" for k, v in reward.items()]))
+        else:
+            self.add_log(f"💡 未能击败{stage['name']}Boss，但你从战斗中学到了很多。")
+
+        # 不论胜负，进入下一阶段；重置阶段计数
+        self.choice_count = 0
+        if self.current_stage_index < len(self.stages) - 1:
+            self.current_stage_index += 1
+            next_stage = self.stages[self.current_stage_index]
+            self.boss_max_health = next_stage['boss_hp']
+            self.boss_current_health = self.boss_max_health
+            self.add_log(f"➡️ 进入下一阶段：{next_stage['name']}")
+        else:
+            self.add_log("🏁 你已完成所有阶段的人生挑战！")
+
         self.update_attributes_display()
     
     
@@ -734,7 +776,7 @@ class GameMain:
         
         self.choice_count_label = tk.Label(
             self.attr_frame,
-            text=f"🎯 选择次数: {self.choice_count}/10",
+            text=self._choice_progress_text(),
             font=("Arial", 12),
             bg='#34495e',
             fg='#e67e22'
@@ -750,6 +792,16 @@ class GameMain:
             fg='#e74c3c'
         )
         self.boss_health_display_label.pack(anchor='w', pady=2)
+        
+        # 阶段显示
+        self.stage_label = tk.Label(
+            self.attr_frame,
+            text=f"🗺️ 当前阶段: {self.stages[self.current_stage_index]['name']}",
+            font=("Arial", 12),
+            bg='#34495e',
+            fg='#ecf0f1'
+        )
+        self.stage_label.pack(anchor='w', pady=2)
     
     def update_attributes_display(self):
         """更新属性显示"""
@@ -763,8 +815,16 @@ class GameMain:
             self.level_label.config(text=f"🏅 等级: {self.level}")
         if hasattr(self, 'next_exp_label'):
             self.next_exp_label.config(text=f"⬆️ 下一级需求: {self.required_exp_for_next_level()} 经验")
-        self.choice_count_label.config(text=f"🎯 选择次数: {self.choice_count}/10")
+        self.choice_count_label.config(text=self._choice_progress_text())
         self.boss_health_display_label.config(text=f"👹 Boss血量: {self.boss_current_health}/{self.boss_max_health}")
+        if hasattr(self, 'stage_label'):
+            self.stage_label.config(text=f"🗺️ 当前阶段: {self.stages[self.current_stage_index]['name']}")
+        if hasattr(self, 'title_label'):
+            self.title_label.config(text=f"🗺️ 当前阶段: {self.stages[self.current_stage_index]['name']}")
+
+    def _choice_progress_text(self):
+        stage = self.stages[self.current_stage_index]
+        return f"🎯 选择次数: {self.choice_count}/{stage['event_limit']}"
     
     def create_game_log(self, parent):
         """创建游戏日志"""
